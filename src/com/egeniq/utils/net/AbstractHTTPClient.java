@@ -4,34 +4,28 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.Charset;
+import java.util.concurrent.TimeUnit;
 
 import android.annotation.SuppressLint;
-import ch.boye.httpclientandroidlib.HttpEntity;
-import ch.boye.httpclientandroidlib.HttpResponse;
-import ch.boye.httpclientandroidlib.HttpVersion;
-import ch.boye.httpclientandroidlib.client.HttpClient;
-import ch.boye.httpclientandroidlib.impl.client.DefaultHttpClient;
-import ch.boye.httpclientandroidlib.impl.conn.tsccm.ThreadSafeClientConnManager;
-import ch.boye.httpclientandroidlib.params.BasicHttpParams;
-import ch.boye.httpclientandroidlib.params.CoreProtocolPNames;
-import ch.boye.httpclientandroidlib.params.HttpConnectionParams;
-import ch.boye.httpclientandroidlib.params.HttpParams;
-import ch.boye.httpclientandroidlib.util.EntityUtils;
+
+import com.squareup.okhttp.OkHttpClient;
 
 /**
  * HTTP client.
  */
 public abstract class AbstractHTTPClient {
     private final static int DEFAULT_TIMEOUT = 15000;
-    
+
     private int _timeout = DEFAULT_TIMEOUT;
 
-    private static HttpClient _httpClient = null;
+    private static OkHttpClient _httpClient = null;
 
     private String _loggingTag = getClass().getName();
     private boolean _loggingEnabled = false;
-    
+
     private String _baseURL;
     private String _secureBaseURL;
 
@@ -41,7 +35,7 @@ public abstract class AbstractHTTPClient {
     public AbstractHTTPClient(String baseURL) {
         this(baseURL, baseURL);
     }
-    
+
     /**
      * Constructor.
      */
@@ -49,7 +43,7 @@ public abstract class AbstractHTTPClient {
         _baseURL = baseURL;
         _secureBaseURL = secureBaseURL;
     }
-    
+
     /**
      * Returns the (secure?) base URL.
      * 
@@ -70,100 +64,73 @@ public abstract class AbstractHTTPClient {
     protected void _setBaseURLs(String baseURL, String secureBaseURL) {
         _baseURL = baseURL;
         _secureBaseURL = secureBaseURL;
-    }    
-    
+    }
+
     /**
-     * Creates the full URL for the given location. 
+     * Creates the full URL for the given location.
      * 
-     * Prepends the correct base URL (based on the useSSL) option unless the given location
-     * itself is already a full HTTP URL.
+     * Prepends the correct base URL (based on the useSSL) option unless the given location itself is already a full HTTP URL.
      * 
      * @param location Location.
-     * @param useSSL   Use SSL?
+     * @param useSSL Use SSL?
      * 
-     * @return Full URL. 
+     * @return Full URL.
      */
     @SuppressLint("DefaultLocale")
-    protected String _getURL(String location, boolean useSSL) {
-        if (location == null) {
-            return _getBaseURL(useSSL);
-        } else if (location.toLowerCase().startsWith("http:") || location.toLowerCase().startsWith("https:")) {
-            return location;
-        } else {
-            return _getBaseURL(useSSL) + "/" + location;
+    protected URL _getURL(String location, boolean useSSL) {
+        try {
+            if (location == null) {
+                return new URL(_getBaseURL(useSSL));
+            } else if (location.toLowerCase().startsWith("http:") || location.toLowerCase().startsWith("https:")) {
+                return new URL(location);
+            } else {
+                return new URL(_getBaseURL(useSSL) + "/" + location);
+            }
+        } catch (Exception e) {
+            return null;
         }
-    }    
-    
+    }
+
+    /**
+     * Creates or returns the HTTP client object.
+     */
+    protected synchronized OkHttpClient _getClient() {
+        if (_httpClient == null) {
+            OkHttpClient client = new OkHttpClient();
+            client.setConnectTimeout(_timeout, TimeUnit.MILLISECONDS);
+            client.setReadTimeout(_timeout, TimeUnit.MILLISECONDS);
+            _httpClient = client;
+        }
+
+        return _httpClient;
+    }
+
     /**
      * Is logging enabled?
      */
     protected boolean _isLoggingEnabled() {
         return _loggingEnabled;
     }
-    
+
     /**
      * Enable / disable logging.
      */
     protected void _setLoggingEnabled(boolean loggingEnabled) {
         _loggingEnabled = loggingEnabled;
-    }    
-    
+    }
+
     /**
      * Returns the logging tag.
      */
     protected String _getLoggingTag() {
         return _loggingTag;
     }
-    
+
     /**
      * Sets the logging tag.
      */
     protected void _setLoggingTag(String tag) {
         _loggingTag = tag;
-    }
-    
-    /**
-     * Returns the default http request parameters.
-     */
-    protected HttpParams _getDefaultParams() {
-        HttpParams params = new BasicHttpParams();
-        HttpConnectionParams.setConnectionTimeout(params, _timeout);
-        HttpConnectionParams.setSoTimeout(params, _timeout);
-        HttpConnectionParams.setSoKeepalive(params, true);
-        return params;
-    }
-    
-    /**
-     * Get the currently set timeout.
-     */
-    public int getTimeout() {
-        return _timeout;
-    }
-
-    /**
-     * Set a new timeout value
-     */
-    public void setTimeout(int timeout) {
-        _timeout = timeout;
-    }    
-
-    /**
-     * Creates a HTTP client object.
-     */
-    protected synchronized static HttpClient _getClient() {
-        if (_httpClient == null) {
-            ThreadSafeClientConnManager connectionManager = new ThreadSafeClientConnManager();
-            connectionManager.setDefaultMaxPerRoute(10);
-            connectionManager.setMaxTotal(100);
-            HttpParams params = new BasicHttpParams();
-            HttpConnectionParams.setConnectionTimeout(params, DEFAULT_TIMEOUT);
-            HttpConnectionParams.setSoTimeout(params, DEFAULT_TIMEOUT);
-            HttpConnectionParams.setSoKeepalive(params, true);
-            _httpClient = new DefaultHttpClient(connectionManager, params);
-            _httpClient.getParams().setParameter(CoreProtocolPNames.PROTOCOL_VERSION, HttpVersion.HTTP_1_1);
-        }
-        
-        return _httpClient;
     }
 
     /**
@@ -174,18 +141,8 @@ public abstract class AbstractHTTPClient {
      * @throws IOException
      * @throws IllegalStateException
      */
-    protected String _getResponseBody(HttpResponse response) throws IllegalStateException, IOException {
-        if (response == null) {
-            return null;
-        }
-
-        HttpEntity entity = response.getEntity();
-
-        if (entity == null) {
-            return null;
-        }
-
-        InputStream content = entity.getContent();
+    protected String _getResponseBody(HttpURLConnection conn) throws IllegalStateException, IOException {
+        InputStream content = conn.getInputStream();
         BufferedReader reader = new BufferedReader(new InputStreamReader(content, Charset.forName("UTF-8")), 8192);
         StringBuilder builder = new StringBuilder();
 
@@ -195,8 +152,8 @@ public abstract class AbstractHTTPClient {
         }
 
         reader.close();
-        EntityUtils.consumeQuietly(entity);
-        
+        content.close();
+
         return builder.toString();
     }
 }
